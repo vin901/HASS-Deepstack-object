@@ -78,7 +78,7 @@ CONF_ROI_X_MAX = "roi_x_max"
 CONF_SCALE = "scale"
 CONF_CUSTOM_MODEL = "custom_model"
 
-DATETIME_FORMAT = "%Y-%m-%d_%H-%M-%S-%f"
+DATETIME_FORMAT = "%Y-%m-%d_%H-%M-%S"   #giddy - removed microseconds
 DEFAULT_API_KEY = ""
 DEFAULT_TARGETS = [{CONF_TARGET: PERSON}]
 DEFAULT_TIMEOUT = 10
@@ -495,7 +495,7 @@ class ObjectClassifyEntity(ImageProcessingEntity):
         # Save images, returning the path of saved image as str
         latest_save_path = (
             directory
-            / f"{get_valid_filename(self._name).lower()}_latest.{self._save_file_format}"
+            / f"{get_valid_filename(self._name.replace('deepstack_object_', '')).lower()}_latest.{self._save_file_format}"
         )
         img.save(latest_save_path)
         _LOGGER.info("Deepstack saved file %s", latest_save_path)
@@ -504,7 +504,7 @@ class ObjectClassifyEntity(ImageProcessingEntity):
         if self._save_timestamped_file:
             timestamp_save_path = (
                 directory
-                / f"{self._name}_{self._last_detection}.{self._save_file_format}"
+                / f"{self._name.replace('deepstack_object_', '')}_{self._last_detection}.{self._save_file_format}"
             )
             img.save(timestamp_save_path)
             _LOGGER.info("Deepstack saved file %s", timestamp_save_path)
