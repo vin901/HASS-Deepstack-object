@@ -210,6 +210,9 @@ Currently only the helper functions are tested, using pytest.
 * `pip install -r requirements-dev.txt`
 * `venv/bin/py.test custom_components/deepstack_object/tests.py -vv -p no:warnings`
 
+## TO-BE-DONE
+* Add min_object_size` option for each target object, e.g. a dog might be detected as a car sometimes
+
 ## Videos of usage
 Checkout this excellent video of usage from [Everything Smart Home](https://www.youtube.com/channel/UCrVLgIniVg6jW38uVqDRIiQ)
 
