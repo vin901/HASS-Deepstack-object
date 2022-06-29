@@ -310,8 +310,12 @@ class ObjectClassifyEntity(ImageProcessingEntity):
         self._state = None
         self._objects = []  # The parsed raw data
         self._targets_found = []
-        self._targets_last = {}
+        self._targets_last = {} # used for storing the previous/last objects
+        self._targets_last[self._camera] = []
+        self._targets_latest = {} # used for comparing latest objects
+        self._targets_latest[self._camera] = []
         self._last_detection = None
+        self._last_filename = None
 
         self._roi_dict = {
             "y_min": roi_y_min,
@@ -365,10 +369,15 @@ class ObjectClassifyEntity(ImageProcessingEntity):
 
         self._objects = get_objects(predictions, self._image_width, self._image_height)
         self._targets_found = []
-        last_targets_cp = {}    #make copy of _targets_last and pop matches, so its faster
-        if self._targets_last and self._camera in self._targets_last:
-            last_targets_cp = self._targets_last[self._camera]
+        real_targets_found = []     #only real targets excluding ignored targets
+        latest_targets_cp = {}    #make copy of _targets_latest and pop matches, so its faster
+        if self._targets_latest and self._camera in self._targets_latest:
+            latest_targets_cp = self._targets_latest[self._camera]
+            self._targets_last[self._camera] = self._targets_latest[self._camera]   #set the last targets to the existing latest
 
+        confidence = DEFAULT_CONFIDENCE
+        ignore_count = 0
+        target_count = 0
         for obj in self._objects:
             if not (
                 (obj["name"] in self._targets_names)
@@ -377,9 +386,6 @@ class ObjectClassifyEntity(ImageProcessingEntity):
                 continue
             ## Then check if the type has a configured confidence, if yes assign
             ## Then if a confidence for a named object, this takes precedence over type confidence
-            confidence = DEFAULT_CONFIDENCE
-            ignore_count = 0
-            target_count = 0
             for target in self._targets:
                 if obj["object_type"] == target[CONF_TARGET]:
                     confidence = target[CONF_CONFIDENCE]
@@ -392,7 +398,7 @@ class ObjectClassifyEntity(ImageProcessingEntity):
                 # Ignore target if it was previously detected
                 ignore = "false"
                 if self._prev_objs_ignore:
-                    for last in last_targets_cp:
+                    for last in latest_targets_cp:
                         if obj["name"] == last['name']:     #FIXED CRASH here cuz last contains keys, should be last['name']
                             objBox = obj["bounding_box"]
                             lasBox = last["bounding_box"]
@@ -405,20 +411,33 @@ class ObjectClassifyEntity(ImageProcessingEntity):
                                 break
                         else: continue
 
-                if ignore == "false": target_count += 1
                 obj["ignore"] = ignore
                 obj["ignoreCount"] = ignore_count
                 self._targets_found.append(obj)
+
+                if ignore == "false": 
+                    target_count += 1
+                    real_targets_found.append(obj)
+
         #END for obj in self._objects
 
+        real_targets_found = [
+            obj["name"] for obj in real_targets_found   #self._targets_found
+        ]  # Just the list of target names, e.g. [car, car, person]
+        self._summary = dict(Counter(real_targets_found))  # e.g. {'car':2, 'person':1}
+
+        target_event_data = {}
         self._state = target_count  #len(self._targets_found)
         if self._state > 0:
+            # Set last_detection time
             self._last_detection = dt_util.now().strftime(DATETIME_FORMAT)
-
-        targets_found = [
-            obj["name"] for obj in self._targets_found
-        ]  # Just the list of target names, e.g. [car, car, person]
-        self._summary = dict(Counter(targets_found))  # e.g. {'car':2, 'person':1}
+            # Fire 1 event of all detected objects, with 'targets_found' and 'summary'
+            target_event_data[ATTR_ENTITY_ID] = self.entity_id
+            target_event_data["targets_found"] = real_targets_found
+            target_event_data["summary"] = self._summary
+            if saved_image_path:
+                target_event_data[SAVED_FILE] = saved_image_path
+            self.hass.bus.fire(EVENT_OBJECT_DETECTED, target_event_data)
 
         if self._save_file_folder:
             if self._state > 0 or self._always_save_latest_file:
@@ -427,15 +446,14 @@ class ObjectClassifyEntity(ImageProcessingEntity):
                     self._save_file_folder,
                 )
 
-        # Fire events
-        for target in self._targets_found:
-            target_event_data = target.copy()
-            target_event_data[ATTR_ENTITY_ID] = self.entity_id
-            if saved_image_path:
-                target_event_data[SAVED_FILE] = saved_image_path
-            self.hass.bus.fire(EVENT_OBJECT_DETECTED, target_event_data)
+        # for target in self._targets_found:
+        #     target_event_data = target.copy()
+        #     target_event_data[ATTR_ENTITY_ID] = self.entity_id
+        #     if saved_image_path:
+        #         target_event_data[SAVED_FILE] = saved_image_path
+        #     self.hass.bus.fire(EVENT_OBJECT_DETECTED, target_event_data)
 
-        self._targets_last[self._camera] = self._targets_found    #save the targets for next time
+        self._targets_latest[self._camera] = self._targets_found    #save the targets for next time
 
     @property
     def camera_entity(self):
@@ -476,6 +494,8 @@ class ObjectClassifyEntity(ImageProcessingEntity):
         attr["summary"] = self._summary
         if self._last_detection:
             attr["last_target_detection"] = self._last_detection
+        if self._last_filename:
+            attr["last_filename"] = str(self._last_filename)    #convert path to str otherwise will get error "Object of type PosixPath is not JSON serializable"
         if self._custom_model:
             attr["custom_model"] = self._custom_model
         attr["all_objects"] = [
@@ -558,4 +578,8 @@ class ObjectClassifyEntity(ImageProcessingEntity):
             img.save(timestamp_save_path)
             _LOGGER.info("Deepstack saved file %s", timestamp_save_path)
             saved_image_path = timestamp_save_path
+
+        # Only update last_filename if state > 0
+        if (self._state > 0): self._last_filename = saved_image_path
+
         return str(saved_image_path)
